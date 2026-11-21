@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-"""Build the 20 November 2026 world-news front page, 1024x1024.
+"""Build the 20 November 2026 world-news front page, v2, 1024x1024.
 
-Layout, top to bottom: masthead, giant serif date, anchor line, numbers
-strip, region bar, one dominant lead hero (Kyiv bridges + Poland missiles,
-the war reaching NATO), two secondary heroes (Wall Street, Akvan), ten drawn
-cards for the heavy stories, a world map with numbered pins, 23 numbered
-briefs, a DATE CHECK box, and a source footer. Cream paper, black ink, red
-accent. No em dash anywhere. Deterministic: same input art, same output.
+Same front page as v1 (36 stories, same facts, same lead, same layout),
+rebuilt to fix two bugs the user found in v1:
+1. Overlapping text in the card rows. In v1 the card 5 kicker
+   ("5 · STRAIT OF HORMUZ · MIDDLE EAST") measured 216 px in a 196 px
+   column and bled into card 6, and card titles sat 4 px from the edge.
+   Fix: shorter kickers, a smaller card title font, and every card's text
+   drawn on its own offscreen canvas exactly the card's width, so no
+   glyph can ever cross into the next card. Lines that would still exceed
+   the width are cut with an ellipsis.
+2. Soft art. All 13 pictures were generated fresh at full resolution,
+   downscaled with Lanczos, and the page is saved at JPEG quality 90.
+
+Deterministic: same input art, same output bytes. No em dash anywhere.
 """
 import glob
 import os
@@ -54,8 +61,8 @@ F_DEK = font("DejaVuSans.ttf", 13)
 F_H2 = font("DejaVuSans-Bold.ttf", 19)
 F_BODY2 = font("DejaVuSans.ttf", 12)
 F_SRC = font("DejaVuSans.ttf", 10)
-F_CARD_KICK = font("DejaVuSans-Bold.ttf", 10)
-F_CARD_TITLE = font("DejaVuSans-Bold.ttf", 14)
+F_CARD_KICK = font("DejaVuSans-Bold.ttf", 9)
+F_CARD_TITLE = font("DejaVuSans-Bold.ttf", 13)
 F_CARD_BODY = font("DejaVuSans.ttf", 10)
 F_CARD_SRC = font("DejaVuSans.ttf", 9)
 F_MAPHEAD = font("DejaVuSans-Bold.ttf", 12)
@@ -75,7 +82,7 @@ def art(prefix):
 
 
 def cover(im, w, h):
-    """Centre crop to w x h, keeping the middle band."""
+    """Centre crop to w x h, keeping the middle band. Lanczos downscale."""
     iw, ih = im.size
     s = max(w / iw, h / ih)
     im2 = im.resize((int(iw * s) + 1, int(ih * s) + 1), Image.LANCZOS)
@@ -100,17 +107,28 @@ def wrap(d, text, f, width):
     return lines
 
 
+def fit_line(d, text, f, width):
+    """Cut a single line with an ellipsis if it would exceed width."""
+    if d.textlength(text, font=f) <= width:
+        return text
+    while text and d.textlength(text + "…", font=f) > width:
+        text = text[:-1]
+    return text + "…"
+
+
 def draw_tag(d, x_right, y, text):
     d.text((x_right - d.textlength(text, font=F_CARD_SRC), y), text,
            font=F_CARD_SRC, fill=RED)
 
 
 # (num, place, region, title, body, source, tag, art prefix)
+# Kicker place names are kept short on purpose: the v1 kicker for card 5
+# measured 216 px in a 196 px column and bled into card 6.
 CARDS = [
     (4, "ANTALYA", "GLOBAL", "Climate talks run past their deadline",
      "No deal on the final day. The draft has no mention of fossil fuels.",
      "Le Monde · UN News", "REPORTED", "card-cop31"),
-    (5, "STRAIT OF HORMUZ", "MIDDLE EAST", "A tanker burns in the oil chokepoint",
+    (5, "HORMUZ", "MIDDLE EAST", "A tanker burns in the oil chokepoint",
      "A projectile hit a tanker off Oman. Iran blamed a mine, unverified.",
      "Reuters · UKMTO", "REPORTED", "card-hormuz"),
     (6, "BRUSSELS", "EUROPE", "Britain and the EU rebuild a piece of Brexit",
@@ -221,6 +239,44 @@ CONTINENTS = [
      (113, -25), (114, -22), (110, -20), (104, -18), (100, -15), (95, -15)],
 ]
 
+# Card text zone geometry. The text canvas is exactly one card wide, so a
+# long kicker or headline is cut at the card edge instead of crossing over.
+CW = 196
+CARD_TEXT_H = 88
+
+
+def render_card_text(card):
+    """Draw one card's kicker, title, body, source and tag on a canvas
+    exactly CW wide. Returns the canvas plus the widest line drawn, for
+    the build-time check."""
+    num, place, region, title, body, src, tag, _prefix = card
+    canvas = Image.new("RGBA", (CW, CARD_TEXT_H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(canvas)
+    kicker = fit_line(d, str(num) + " · " + place + " · " + region,
+                      F_CARD_KICK, CW)
+    d.text((0, 0), kicker, font=F_CARD_KICK, fill=RED)
+    widest = d.textlength(kicker, font=F_CARD_KICK)
+    tlines = wrap(d, title, F_CARD_TITLE, CW)
+    ty = 14
+    for ln in tlines[:2]:
+        ln = fit_line(d, ln, F_CARD_TITLE, CW)
+        d.text((0, ty), ln, font=F_CARD_TITLE, fill=INK)
+        widest = max(widest, d.textlength(ln, font=F_CARD_TITLE))
+        ty += 14
+    blines = wrap(d, body, F_CARD_BODY, CW)
+    by = 46
+    for ln in blines[:2]:
+        ln = fit_line(d, ln, F_CARD_BODY, CW)
+        d.text((0, by), ln, font=F_CARD_BODY, fill=INK)
+        widest = max(widest, d.textlength(ln, font=F_CARD_BODY))
+        by += 11
+    tag_text = "[" + tag + "]"
+    tag_w = d.textlength(tag_text, font=F_CARD_SRC)
+    src_text = fit_line(d, src, F_CARD_SRC, CW - tag_w - 6)
+    d.text((0, 74), src_text, font=F_CARD_SRC, fill=INK)
+    d.text((CW - tag_w, 74), tag_text, font=F_CARD_SRC, fill=RED)
+    return canvas, widest
+
 
 def build():
     img = Image.new("RGB", (W, H), PAPER)
@@ -318,31 +374,21 @@ def build():
         draw_tag(d, x0 + 480, hy2 + 104, "[" + tag + "]")
 
     # Ten drawn cards, two rows of five. Slot 150 tall, image 58 tall.
-    cw = 196
+    # The text of each card is pasted from its own canvas, so a long line
+    # can never cross into the next card.
     gap = 4
     for row in range(2):
         cy = 470 + row * 150
         for col in range(5):
             card = CARDS[row * 5 + col]
-            num, place, region, title, body, src, tag, prefix = card
-            x = 12 + col * (cw + gap)
-            x2 = x + cw
-            imc = cover(art(prefix), cw, 58)
+            num = card[0]
+            x = 12 + col * (CW + gap)
+            imc = cover(art(card[7]), CW, 58)
             img.paste(imc, (x, cy))
-            d.text((x, cy + 62), str(num) + " · " + place + " · " + region,
-                   font=F_CARD_KICK, fill=RED)
-            tlines = wrap(d, title, F_CARD_TITLE, cw)
-            ty = cy + 76
-            for ln in tlines[:2]:
-                d.text((x, ty), ln, font=F_CARD_TITLE, fill=INK)
-                ty += 15
-            blines = wrap(d, body, F_CARD_BODY, cw)
-            by = cy + 108
-            for ln in blines[:2]:
-                d.text((x, by), ln, font=F_CARD_BODY, fill=INK)
-                by += 11
-            d.text((x, cy + 136), src, font=F_CARD_SRC, fill=INK)
-            draw_tag(d, x2, cy + 136, "[" + tag + "]")
+            text_canvas, widest = render_card_text(card)
+            img.paste(text_canvas, (x, cy + 62), text_canvas)
+            print("card %d widest text line: %.0f px (limit %d)"
+                  % (num, widest, CW))
 
     # Section headers
     d.text((12, 776), "WHERE IT HAPPENED · 1-13", font=F_MAPHEAD, fill=INK)
@@ -398,7 +444,7 @@ def build():
            "named sources; CLAIM means one side says so.", font=F_FOOT, fill=INK)
 
     out = os.path.join(WORK, "entry.png")
-    img.save(out, "JPEG", quality=83)
+    img.save(out, "JPEG", quality=90)
     print("wrote", out, os.path.getsize(out), "bytes")
     return out
 

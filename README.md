@@ -23,6 +23,8 @@ The war reached NATO. Russia's biggest barrage of the month hit three Dnipro bri
 
 The hero and card pictures are AI-generated illustrations with no text in them. The headlines, numbers, map, and briefs are composited on top with PIL by `build_image.py`, so the text stays sharp and the facts stay consistent. `main.py` copies the finished `entry.png` to `/output/entry.png` using the standard library only. Two runs write identical bytes.
 
+Version 2 rebuilt every picture at full resolution and fixed the card text layout: each card's words are drawn on a canvas exactly as wide as the card, so no headline or kicker can cross into the card next to it.
+
 Sources: Reuters, AP, AFP, BBC, Al Jazeera, IMD, WSJ. All pictures are AI-generated illustrations. The map is drawn in code.
 
 ## Run it

@@ -23,6 +23,8 @@ def sha256(path):
 
 
 def main():
+    if not os.path.isfile(SRC):
+        raise SystemExit("missing entry.png next to main.py")
     os.makedirs("/output", exist_ok=True)
     shutil.copyfile(SRC, OUT)
     if sha256(SRC) != sha256(OUT):
